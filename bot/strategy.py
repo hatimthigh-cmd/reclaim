@@ -137,6 +137,55 @@ def analyze(s: Series, cfg, warm: int = 300) -> Analysis:
     return out
 
 
+def diagnose(s: Series, cfg, a: Analysis, warm: int = 300) -> str:
+    """One-line, log-friendly explanation of which setup conditions the last closed candle meets.
+
+    Read-only: it re-derives the same numbers analyze() uses and changes no trading logic.
+    """
+    n = s.n
+    i = n - 1
+    if n <= warm:
+        return f"history too short ({n}/{warm} candles) -> no setup"
+    H, L, C = s.H, s.L, s.C
+    lo = max(0, i - cfg.pump_lookback_h)
+    ph = lo
+    for k in range(lo, i):                      # latest of equal highs wins (same as analyze)
+        if H[k] >= H[ph]:
+            ph = k
+    hi = H[ph]
+    base = min(L[max(0, ph - cfg.base_lookback_h):ph]) if ph > 0 else 0.0
+    pump = hi / base - 1 if base else 0.0
+    LL, li = float("inf"), -1
+    for k in range(ph + 1, i + 1):
+        if L[k] < LL:
+            LL, li = L[k], k
+    dd = 1 - LL / hi if hi else 0.0
+    fx = flush_x(s, li) if li >= 1 else 0.0
+    left = li + cfg.reclaim_window_h - i
+    reclaimed = any(sg.li == li for sg in a.signals)
+    below = C[i] <= s.e200[i]
+
+    def ok(v: bool) -> str:
+        return "OK" if v else "NO"
+
+    checks = [
+        ("pump", pump >= cfg.pump_min, f"pump +{pump * 100:.0f}% (need {cfg.pump_min * 100:.0f}%)"),
+        ("dump", dd >= cfg.dump_min, f"dump -{dd * 100:.0f}% (need {cfg.dump_min * 100:.0f}%)"),
+        ("flush", fx >= cfg.flush_atr_min, f"flush {fx:.1f}xATR (need {cfg.flush_atr_min:.1f})"),
+        ("window", left >= 1, f"{max(left, 0)} candle(s) left to reclaim"),
+        ("not-yet-reclaimed", not reclaimed, "reclaim already fired" if reclaimed else "no reclaim yet"),
+        ("below-EMA", below, "close below EMA" if below else "close above EMA"),
+    ]
+    detail = " · ".join(f"{text} {ok(passed)}" for _, passed, text in checks)
+    sig = a.last_signal
+    if a.armed:
+        return f"{detail} -> ARMED (waiting for close above EMA)"
+    if sig and sig.i == i and sig.valid:
+        return f"{detail} -> TRIGGER"
+    failed = ", ".join(name for name, passed, _ in checks if not passed)
+    return f"{detail} -> no setup (fails: {failed})"
+
+
 def flush_x(s: Series, li: int) -> float:
     a = s.atr[li - 1] if li >= 1 and s.atr[li - 1] > 0 else s.atr[li]
     return (s.H[li] - s.L[li]) / a if a > 0 else 0.0

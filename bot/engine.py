@@ -13,7 +13,7 @@ from typing import Optional
 from . import messages as M
 from .binance import Binance, BinanceError
 from .store import Setup, Store
-from .strategy import HOUR_MS, Series, analyze, levels_for
+from .strategy import HOUR_MS, Series, analyze, diagnose, levels_for
 from .telegram import Telegram
 
 log = logging.getLogger("engine")
@@ -252,9 +252,9 @@ class Engine:
                 await self.process_closed_bar(sym, s, notify_new=(j == len(new_idx[-6:]) - 1))
             self.store.set_kv(last_key, str(bars[new_idx[-1]][0]))
             n_done += 1
-            state = "ARMED" if sym in self.armed else "-"
-            log.info("Scanned %-14s close=%-12g EMA%d=%-12g %s [%d/%d]", sym, s.C[-1], self.cfg.ema_len,
-                     s.e200[-1], state, n_done, len(self.bars))
+            why = diagnose(s, self.cfg, analyze(s, self.cfg, self.warm), self.warm)
+            log.info("[%d/%d] %s close=%g EMA%d=%g | %s", n_done, len(self.bars), sym, s.C[-1],
+                     self.cfg.ema_len, s.e200[-1], why)
         self.last_cycle_ms = self.client.now_ms()
         log.info("Hourly cycle: %d coins processed in %.1fs · watching %d · pending %d · open %d",
                  n_done, time.time() - t0, len(self.armed), len(self.store.by_status("pending")),
