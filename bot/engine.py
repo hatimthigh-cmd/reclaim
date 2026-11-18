@@ -252,10 +252,16 @@ class Engine:
                 await self.process_closed_bar(sym, s, notify_new=(j == len(new_idx[-6:]) - 1))
             self.store.set_kv(last_key, str(bars[new_idx[-1]][0]))
             n_done += 1
+            state = "ARMED" if sym in self.armed else "-"
+            log.info("Scanned %-14s close=%-12g EMA%d=%-12g %s [%d/%d]", sym, s.C[-1], self.cfg.ema_len,
+                     s.e200[-1], state, n_done, len(self.bars))
         self.last_cycle_ms = self.client.now_ms()
         log.info("Hourly cycle: %d coins processed in %.1fs · watching %d · pending %d · open %d",
                  n_done, time.time() - t0, len(self.armed), len(self.store.by_status("pending")),
                  len(self.store.by_status("open")))
+        nxt = (self.last_cycle_ms // HOUR_MS + 1) * HOUR_MS
+        log.info("Next hourly scan at %s UTC (waiting for the candle to close)",
+                 time.strftime("%H:%M", time.gmtime(nxt / 1000)))
 
     async def early_scan(self) -> None:
         """Called repeatedly in the last minutes of each hour for coins that are armed."""
