@@ -237,24 +237,30 @@ class Engine:
         t0 = time.time()
         await self.update_bars()
         n_done = 0
-        for sym, bars in list(self.bars.items()):
+        total = len(self.bars)
+        for pos, (sym, bars) in enumerate(list(self.bars.items()), 1):
             if len(bars) < self.cfg.min_history_h:
+                log.info("[%d/%d] %s skipped: only %d candles of history (need %d)", pos, total, sym,
+                         len(bars), self.cfg.min_history_h)
                 continue
             last_key = f"last:{sym}"
             last_done = int(self.store.get_kv(last_key, "0") or 0)
             new_idx = [i for i, b in enumerate(bars) if b[0] > last_done]
-            if not new_idx:
-                continue
-            if last_done == 0:
-                new_idx = new_idx[-1:]           # first run: only the newest candle
-            for j, idx in enumerate(new_idx[-6:]):  # catch up at most 6 missed candles
-                s = Series.from_bars(bars[: idx + 1], self.cfg.ema_len, self.cfg.atr_len)
-                await self.process_closed_bar(sym, s, notify_new=(j == len(new_idx[-6:]) - 1))
-            self.store.set_kv(last_key, str(bars[new_idx[-1]][0]))
-            n_done += 1
+            if new_idx:
+                if last_done == 0:
+                    new_idx = new_idx[-1:]           # first run: only the newest candle
+                for j, idx in enumerate(new_idx[-6:]):  # catch up at most 6 missed candles
+                    s = Series.from_bars(bars[: idx + 1], self.cfg.ema_len, self.cfg.atr_len)
+                    await self.process_closed_bar(sym, s, notify_new=(j == len(new_idx[-6:]) - 1))
+                self.store.set_kv(last_key, str(bars[new_idx[-1]][0]))
+                n_done += 1
+                tag = ""
+            else:
+                s = Series.from_bars(bars, self.cfg.ema_len, self.cfg.atr_len)
+                tag = " (already processed, status check only)"
             why = diagnose(s, self.cfg, analyze(s, self.cfg, self.warm), self.warm)
-            log.info("[%d/%d] %s close=%g EMA%d=%g | %s", n_done, len(self.bars), sym, s.C[-1],
-                     self.cfg.ema_len, s.e200[-1], why)
+            log.info("[%d/%d] %s close=%g EMA%d=%g | %s%s", pos, total, sym, s.C[-1],
+                     self.cfg.ema_len, s.e200[-1], why, tag)
         self.last_cycle_ms = self.client.now_ms()
         log.info("Hourly cycle: %d coins processed in %.1fs · watching %d · pending %d · open %d",
                  n_done, time.time() - t0, len(self.armed), len(self.store.by_status("pending")),
